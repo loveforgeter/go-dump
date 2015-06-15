@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"reflect"
+	"strconv"
 )
 
 var (
@@ -14,7 +15,6 @@ var (
 	equal              = []byte("=")
 	comma              = []byte(",")
 	colon              = []byte(":")
-	quote              = []byte("\"")
 	pointer            = []byte("*")
 	address            = []byte("&")
 	openBrace          = []byte("{")
@@ -27,12 +27,16 @@ var (
 	leftArrow          = []byte("<-")
 )
 
-func Dump(v interface{}, w io.Writer) {
+func Dump(v interface{}, w io.Writer, name ...string) {
 	value := reflect.ValueOf(v)
-	// var v type = xxx
+	// var v type = name
+	varName := "v"
+	if len(name) != 0 {
+		varName = name[0]
+	}
 	w.Write(varBytes)
 	w.Write(space)
-	w.Write([]byte("v"))
+	w.Write([]byte(varName))
 	w.Write(space)
 	w.Write([]byte(value.Type().String()))
 	w.Write(space)
@@ -40,7 +44,12 @@ func Dump(v interface{}, w io.Writer) {
 	w.Write(space)
 	dumpAny(value, w)
 }
+
 func dumpAny(v reflect.Value, w io.Writer) {
+	if !v.CanInterface() {
+		return
+	}
+
 	kind := v.Kind()
 	switch kind {
 	case reflect.Bool:
@@ -50,7 +59,7 @@ func dumpAny(v reflect.Value, w io.Writer) {
 		dumpNumber(v, w)
 	case reflect.String:
 		dumpString(v, w)
-	case reflect.Slice:
+	case reflect.Slice, reflect.Array:
 		dumpSlice(v, w)
 	case reflect.Map:
 		dumpMap(v, w)
@@ -63,6 +72,7 @@ func dumpAny(v reflect.Value, w io.Writer) {
 	case reflect.Interface:
 		dumpInterface(v, w)
 	default:
+		panic(fmt.Sprint("unknown type %v", kind))
 	}
 }
 
@@ -79,32 +89,65 @@ func dumpNumber(v reflect.Value, w io.Writer) {
 }
 
 func dumpString(v reflect.Value, w io.Writer) {
-	w.Write([]byte(v.String()))
+	w.Write([]byte(strconv.Quote(v.String())))
 }
 
 func dumpSlice(v reflect.Value, w io.Writer) {
+	w.Write(openSqureBracket)
+	for i := 0; i < v.Len(); i++ {
+		dumpAny(v.Index(i), w)
+		if i != v.Len()-1 {
+			w.Write(comma)
+		}
+	}
+	w.Write(closeSquareBracket)
 }
 
 func dumpMap(v reflect.Value, w io.Writer) {
 	w.Write([]byte(v.Type().String()))
 	w.Write(openBrace)
-	for _, key := range v.MapKeys() {
+	for i, key := range v.MapKeys() {
 		dumpAny(key, w)
 		w.Write(colon)
 		dumpAny(v.MapIndex(key), w)
-		w.Write(comma)
+		if i != len(v.MapKeys())-1 {
+			w.Write(comma)
+		}
 	}
 	w.Write(closeBrace)
 }
 
 func dumpChan(v reflect.Value, w io.Writer) {
-
 }
 
 func dumpStruct(v reflect.Value, w io.Writer) {
+	t := v.Type()
+	w.Write([]byte(t.Name()))
+	w.Write(openBrace)
+	numFields := v.NumField()
+	for i := 0; i < numFields; i++ {
+		if !v.Field(i).CanInterface() {
+			continue
+		}
+		w.Write([]byte(t.Field(i).Name))
+		w.Write(colon)
+		dumpAny(v.Field(i), w)
+		w.Write(comma)
+	}
+	w.Write(closeBrace)
 }
 
 func dumpPtr(v reflect.Value, w io.Writer) {
+	if v.IsNil() {
+		return
+	}
+
+	vt := v.Type()
+	for vt.Kind() == reflect.Ptr {
+		v = v.Elem()
+		vt = v.Type()
+	}
+	dumpAny(v, w)
 }
 
 func dumpInterface(v reflect.Value, w io.Writer) {
@@ -112,11 +155,4 @@ func dumpInterface(v reflect.Value, w io.Writer) {
 
 func dumpNil(v reflect.Value, w io.Writer) {
 	w.Write([]byte("nil"))
-}
-
-func unpackValue(v reflect.Value) reflect.Value {
-	if v.IsNil() {
-		return v
-	}
-	return v.Elem()
 }
